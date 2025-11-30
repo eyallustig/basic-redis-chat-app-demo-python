@@ -1,5 +1,6 @@
 import os
 import sys
+import logging
 
 from flask import Flask
 from flask_cors import CORS
@@ -13,17 +14,20 @@ from chat.socketio_signals import io_connect, io_disconnect, io_join_room, io_on
 sess = Session()
 app = Flask(__name__, static_url_path="", static_folder="../client/build")
 app.config.from_object(get_config())
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
+# Initialize Redis and session when the app module is imported so this
+# also runs when gunicorn loads app:app.
+utils.init_redis()
+sess.init_app(app)
+
 
 def run_app():
-    # Create redis connection etc.
-    # Here we initialize our database, create demo data (if it's necessary)
-    # TODO: maybe we need to do it for gunicorn run also?
-    utils.init_redis()
-    sess.init_app(app)
-
     # moved to this method bc it only applies to app.py direct launch
     # Get port from the command-line arguments or environment variables
     arg = sys.argv[1:]

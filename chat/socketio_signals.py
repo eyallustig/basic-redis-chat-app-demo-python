@@ -1,9 +1,13 @@
 import json
+import logging
 
 from flask import session
 from flask_socketio import emit, join_room
 
 from chat import utils
+
+
+logger = logging.getLogger(__name__)
 
 
 def publish(name, message, broadcast=False, room=None):
@@ -14,6 +18,13 @@ def publish(name, message, broadcast=False, room=None):
         emit(name, message, broadcast=broadcast)
     # Here is an additional publish for the redis pub/sub
     outgoing = {"serverId": utils.SERVER_ID, "type": name, "data": message}
+    logger.info(
+        "Publishing event name=%s broadcast=%s room=%s payload_keys=%s",
+        name,
+        broadcast,
+        room,
+        list(message.keys()) if isinstance(message, dict) else None,
+    )
     utils.redis_client.publish("MESSAGES", json.dumps(outgoing))
 
 
@@ -22,6 +33,7 @@ def io_connect():
     # it's better to use get method for dict-like objects, it provides helpful setting of default value
     user = session.get("user", None)
     if not user:
+        logger.warning("Socket.IO connect without authenticated session; disconnecting")
         return
 
     user_id = user.get("id", None)
@@ -30,6 +42,7 @@ def io_connect():
     msg = dict(user)
     msg["online"] = True
 
+    logger.info("Socket.IO user connected id=%s", user_id)
     publish("user.connected", msg, broadcast=True)
 
 
@@ -39,10 +52,12 @@ def io_disconnect():
         utils.redis_client.srem("online_users", user["id"])
         msg = dict(user)
         msg["online"] = False
+        logger.info("Socket.IO user disconnected id=%s", user.get("id"))
         publish("user.disconnected", msg, broadcast=True)
 
 
 def io_join_room(id_room):
+    logger.info("Socket.IO join_room id_room=%s", id_room)
     join_room(id_room)
 
 
@@ -82,6 +97,13 @@ def io_on_message(message):
         }
         publish("show.room", msg, broadcast=True)
     utils.redis_client.zadd(room_key, {message_string: int(message["date"])})
+
+    logger.info(
+        "Socket.IO message for room_id=%s is_private=%s from=%s",
+        room_id,
+        is_private,
+        message.get("from"),
+    )
 
     if is_private:
         publish("message", message, room=room_id)

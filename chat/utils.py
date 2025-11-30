@@ -1,6 +1,7 @@
 import json
 import math
 import random
+import logging
 
 import bcrypt
 
@@ -8,6 +9,7 @@ from chat import demo_data
 from chat.config import get_config
 
 SERVER_ID = random.uniform(0, 322321)
+logger = logging.getLogger(__name__)
 
 redis_client = get_config().redis_client
 
@@ -27,7 +29,9 @@ def create_user(username, password):
 
     redis_client.sadd(f"user:{next_id}:rooms", "0")
 
-    return {"id": next_id, "username": username}
+    user = {"id": next_id, "username": username}
+    logger.info("Created new user id=%s username=%s", next_id, username)
+    return user
 
 
 def get_messages(room_id=0, offset=0, size=50):
@@ -35,10 +39,22 @@ def get_messages(room_id=0, offset=0, size=50):
     room_key = f"room:{room_id}"
     room_exists = redis_client.exists(room_key)
     if not room_exists:
+        logger.info(
+            "Requested messages for non-existent room_id=%s; returning empty list",
+            room_id,
+        )
         return []
     else:
         values = redis_client.zrevrange(room_key, offset, offset + size)
-        return list(map(lambda x: json.loads(x.decode("utf-8")), values))
+        messages = list(map(lambda x: json.loads(x.decode("utf-8")), values))
+        logger.info(
+            "Fetched %d messages for room_id=%s offset=%s size=%s",
+            len(messages),
+            room_id,
+            offset,
+            size,
+        )
+        return messages
 
 
 def hmget(key, key2):
@@ -88,7 +104,10 @@ def init_redis():
         # Rooms with private messages don't have a name
         redis_client.set(f"room:0:name", "General")
 
+        logger.info("Initializing Redis with demo data")
         demo_data.create()
+    else:
+        logger.info("Redis already initialized; skipping demo data creation")
 
 # We use event stream for pub sub. A client connects to the stream endpoint and listens for the messages
 
@@ -97,6 +116,7 @@ def event_stream():
     """Handle message formatting, etc."""
     pubsub = redis_client.pubsub(ignore_subscribe_messages=True)
     pubsub.subscribe("MESSAGES")
+    logger.info("Subscribed to Redis pubsub channel MESSAGES; server_id=%s", SERVER_ID)
     for message in pubsub.listen():
         message_parsed = json.loads(message["data"])
         if message_parsed["serverId"] == SERVER_ID:

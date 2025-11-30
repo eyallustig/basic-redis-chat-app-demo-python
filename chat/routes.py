@@ -1,5 +1,6 @@
 import json
 import os
+import logging
 
 import bcrypt
 from flask import Response, jsonify, request, session
@@ -9,8 +10,12 @@ from chat.app import app
 from chat.auth import auth_middleware
 
 
+logger = logging.getLogger(__name__)
+
+
 @app.route("/stream")
 def stream():
+    logger.info("/stream endpoint subscribed for server-sent events")
     return Response(utils.event_stream(), mimetype="text/event-stream")
 
 
@@ -25,6 +30,7 @@ def catch_all(path):
 @app.route("/me")
 def get_me():
     user = session.get("user", None)
+    logger.info("/me requested; user=%s", user and user.get("username"))
     return jsonify(user)
 
 
@@ -34,6 +40,7 @@ def get_links():
     # Return github link to the repo
     repo = open(os.path.join(app.root_path, "../repo.json"))
     data = json.load(repo)
+    logger.info("/links requested; returning deploy links")
     return jsonify(data)
 
 
@@ -47,9 +54,12 @@ def login():
 
     username_key = utils.make_username_key(username)
     user_exists = utils.redis_client.exists(username_key)
+    logger.info("Login attempt for username=%s; user_exists=%s", username, bool(user_exists))
     if not user_exists:
         new_user = utils.create_user(username, password)
         session["user"] = new_user
+        logger.info("Login successful for NEW username=%s", username)
+        return new_user, 200
     else:
         user_key = utils.redis_client.get(username_key).decode("utf-8")
         data = utils.redis_client.hgetall(user_key)
@@ -59,14 +69,17 @@ def login():
         ):
             user = {"id": user_key.split(":")[-1], "username": username}
             session["user"] = user
+            logger.info("Login successful for username=%s", username)
             return user, 200
 
+    logger.warning("Login failed for username=%s", username)
     return jsonify({"message": "Invalid username or password"}), 404
 
 
 @app.route("/logout", methods=["POST"])
 @auth_middleware
 def logout():
+    logger.info("Logout requested for user=%s", session.get("user"))
     session["user"] = None
     return jsonify(None), 200
 
@@ -85,6 +98,7 @@ def get_online_users():
             "username": user.get(b"username", "").decode("utf-8"),
             "online": True,
         }
+    logger.info("/users/online requested; count=%d", len(users))
     return jsonify(users), 200
 
 
@@ -125,6 +139,7 @@ def get_rooms_for_user_id(user_id=0):
             )
         else:
             rooms.append({"id": room_id, "names": [name.decode("utf-8")]})
+    logger.info("/rooms/%s requested; rooms_count=%d", user_id, len(rooms))
     return jsonify(rooms), 200
 
 
@@ -136,8 +151,16 @@ def get_messages_for_selected_room(room_id="0"):
 
     try:
         messages = utils.get_messages(room_id, int(offset), int(size))
+        logger.info(
+            "/room/%s/messages requested; offset=%s size=%s returned=%d",
+            room_id,
+            offset,
+            size,
+            len(messages),
+        )
         return jsonify(messages)
-    except:
+    except Exception as exc:
+        logger.exception("Failed to get messages for room_id=%s", room_id)
         return jsonify(None), 400
 
 
@@ -154,5 +177,7 @@ def get_user_info_from_ids():
                 "username": user[b"username"].decode("utf-8"),
                 "online": bool(is_member),
             }
+        logger.info("/users requested for ids=%s; returned_count=%d", ids, len(users))
         return jsonify(users)
+    logger.warning("/users requested without ids; returning 404")
     return jsonify(None), 404
